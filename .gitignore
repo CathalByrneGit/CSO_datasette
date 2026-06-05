@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Generated databases — recreate with ETL scripts
+*.db
+
+# Secrets / local config
+.env

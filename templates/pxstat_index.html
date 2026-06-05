@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+
+{% block title %}Load PxStat Table — CSO Datasette{% endblock %}
+
+{% block extra_head %}
+{{ super() }}
+<style>
+  .pxstat-wrap       { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  .pxstat-wrap h1    { font-size: 1.6rem; margin-bottom: 0.25rem; }
+  .pxstat-wrap p.sub { color: var(--color-text-muted, #666); margin-top: 0; }
+
+  .pxstat-card {
+    border: 1px solid var(--color-border, #ddd);
+    border-radius: 6px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    background: var(--color-bg, #fff);
+  }
+  .pxstat-card h2 { font-size: 1.1rem; margin: 0 0 1rem; }
+
+  .load-form       { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .load-form input { flex: 1; min-width: 180px; padding: 0.5rem 0.75rem; border: 1px solid var(--color-border, #ccc); border-radius: 4px; font-size: 1rem; }
+  .load-form button {
+    padding: 0.5rem 1.25rem;
+    background: var(--color-action, #3b82f6);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+  }
+  .load-form button:hover { opacity: 0.88; }
+
+
+
+  .loaded-list     { list-style: none; padding: 0; margin: 0; }
+  .loaded-list li  { padding: 0.4rem 0; border-bottom: 1px solid var(--color-border, #eee); display: flex; align-items: center; gap: 0.75rem; }
+  .loaded-list li:last-child { border-bottom: none; }
+  .loaded-list a   { font-weight: 500; }
+  .loaded-list code { font-size: 0.8rem; color: var(--color-text-muted, #777); }
+
+  .empty-state { color: var(--color-text-muted, #999); font-style: italic; font-size: 0.9rem; }
+
+  #loading-msg { display: none; color: var(--color-text-muted, #666); font-size: 0.9rem; margin-top: 0.5rem; }
+
+  .cat-search-input {
+    width: 100%; box-sizing: border-box;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border, #ccc);
+    border-radius: 4px;
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+  #search-status { font-size: 0.82rem; color: var(--color-text-muted, #888); margin-bottom: 0.5rem; min-height: 1.2em; }
+  #search-results { border: 1px solid var(--color-border, #eee); border-radius: 4px; max-height: 380px; overflow-y: auto; }
+  .sr-item {
+    display: flex; align-items: baseline; gap: 0.6rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-border, #f0f0f0);
+    cursor: pointer; font-size: 0.92rem;
+  }
+  .sr-item:last-child { border-bottom: none; }
+  .sr-item:hover { background: var(--color-bg-hover, #f0f4ff); }
+  .sr-item code { font-size: 0.8rem; color: var(--color-text-muted, #555); min-width: 64px; }
+  .sr-item span { flex: 1; }
+  .sr-load-btn {
+    font-size: 0.78rem; white-space: nowrap;
+    padding: 0.2rem 0.55rem;
+    background: var(--color-action, #3b82f6); color: #fff;
+    border: none; border-radius: 3px; cursor: pointer;
+  }
+  .sr-load-btn:hover { opacity: 0.85; }
+  #search-results.is-loading { opacity: 0.5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pxstat-wrap">
+  <h1>Load a CSO PxStat Table</h1>
+  <p class="sub">Tables load into an in-memory database and are available for the current session only.</p>
+
+  <!-- Quick-load by code -->
+  <div class="pxstat-card">
+    <h2>Load by table code</h2>
+    <form class="load-form" method="POST" action="/-/pxstat/load" id="load-form">
+      <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+      <input type="text" name="code" id="code-input"
+             placeholder="e.g. E2003"
+             value="{{ prefill_code }}"
+             autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+      <button type="submit">Load table</button>
+    </form>
+    <div id="loading-msg">⏳ Fetching from CSO PxStat&hellip;</div>
+    {% if prefill_code %}
+    <p style="margin:0.5rem 0 0; font-size:0.85rem; color:var(--color-text-muted,#666);">
+      Code <strong>{{ prefill_code }}</strong> pre-filled from search. Click <em>Load table</em> to fetch it.
+    </p>
+    {% endif %}
+  </div>
+
+  <!-- Catalog search -->
+  <div class="pxstat-card">
+    <h2>Browse &amp; search the catalog</h2>
+    <input id="catalog-search" class="cat-search-input" type="search"
+           placeholder="Filter by code or title…" autocomplete="off" spellcheck="false">
+    <div id="search-status">Loading catalog…</div>
+    <div id="search-results"></div>
+  </div>
+
+  <!-- Already-loaded tables -->
+  <div class="pxstat-card">
+    <h2>Tables loaded this session</h2>
+    {% if loaded_tables %}
+      <ul class="loaded-list">
+        {% for tbl in loaded_tables %}
+          <li>
+            <a href="/user_tables/{{ tbl }}">{{ tbl }}</a>
+            <code>user_tables</code>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty-state">No tables loaded yet.</p>
+    {% endif %}
+
+    {% if has_curated %}
+      <hr style="margin:1rem 0;border:none;border-top:1px solid var(--color-border,#eee)">
+      <p style="font-size:0.9rem;margin:0;"><a href="/curated">Browse pre-loaded curated tables &rarr;</a></p>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+document.getElementById('load-form').addEventListener('submit', function () {
+  document.getElementById('loading-msg').style.display = 'block';
+});
+
+(function () {
+  const searchInput = document.getElementById('catalog-search');
+  const statusEl    = document.getElementById('search-status');
+  const resultsEl   = document.getElementById('search-results');
+  const codeInput   = document.getElementById('code-input');
+  const loadForm    = document.getElementById('load-form');
+
+  const VISIBLE_CAP = 300; // max DOM nodes rendered at once
+  let allItems = [];        // full catalog, loaded once
+
+  // ── Render a slice of items into the results div ──────────────────────────
+  function renderItems(items) {
+    const visible = items.slice(0, VISIBLE_CAP);
+    const frag    = document.createDocumentFragment();
+
+    for (const { code, title } of visible) {
+      const item = document.createElement('div');
+      item.className = 'sr-item';
+
+      const codeEl = document.createElement('code');
+      codeEl.textContent = code;
+      const titleEl = document.createElement('span');
+      titleEl.textContent = title;
+      const btn = document.createElement('button');
+      btn.className = 'sr-load-btn';
+      btn.type = 'button';
+      btn.textContent = 'Load →';
+      item.append(codeEl, titleEl, btn);
+
+      item.addEventListener('click', function (e) {
+        if (e.target === btn) return;
+        codeInput.value = code;
+        codeInput.focus();
+      });
+
+      btn.addEventListener('click', function () {
+        codeInput.value = code;
+        document.getElementById('loading-msg').style.display = 'block';
+        loadForm.submit();
+      });
+
+      frag.appendChild(item);
+    }
+
+    resultsEl.innerHTML = '';
+    resultsEl.appendChild(frag);
+
+    const total = items.length;
+    if (total > VISIBLE_CAP) {
+      const note = document.createElement('div');
+      note.style.cssText = 'padding:0.4rem 0.75rem;font-size:0.8rem;color:var(--color-text-muted,#888);';
+      note.textContent = `Showing ${VISIBLE_CAP} of ${total.toLocaleString()} — type to filter`;
+      resultsEl.appendChild(note);
+    }
+  }
+
+  // ── Filter and re-render on each keystroke ────────────────────────────────
+  searchInput.addEventListener('input', function () {
+    const q  = this.value.trim().toLowerCase();
+    const matched = q
+      ? allItems.filter(i => i.code.toLowerCase().includes(q) || i.title.toLowerCase().includes(q))
+      : allItems;
+
+    statusEl.textContent = q
+      ? `${matched.length.toLocaleString()} matching "${this.value.trim()}"`
+      : `${allItems.length.toLocaleString()} tables`;
+
+    renderItems(matched);
+  });
+
+  // ── Load full catalog from local SQLite on page load ─────────────────────
+  async function loadCatalog() {
+    try {
+      const res  = await fetch('/curated/pxstat_catalog.json?_size=15000&_shape=objects&_nofacet=1');
+      const data = await res.json();
+      allItems   = (data.rows || []).map(r => ({ code: r.code, title: r.title }));
+
+      statusEl.textContent = `${allItems.length.toLocaleString()} tables`;
+      renderItems(allItems);
+    } catch (err) {
+      statusEl.textContent = 'Could not load catalog: ' + err.message;
+    }
+  }
+
+  loadCatalog();
+})();
+</script>
+{% endblock %}

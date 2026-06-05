@@ -1,0 +1,173 @@
+/* --- THE RESILIENT/LOW-TECH SKIN FOR DATASETTE --- */
+
+:root {
+  --bg-color: #f5edcf;
+  --dot-color: rgba(59, 100, 210, 0.12);
+  --text-color: #1a1a1a;
+  --link-color: #1a1a1a;
+  --border-color: #c9bfa0;
+  --color-border: #c9bfa0; /* alias for Datasette's own variable name */
+  --accent-bg: rgba(100, 70, 0, 0.05);
+}
+
+/* 1. Applying the Monochrome Halftone Background globally */
+body {
+  background-color: var(--bg-color) !important;
+  background-image: radial-gradient(var(--dot-color) 1px, transparent 1px) !important;
+  background-size: 16px 16px !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+  color: var(--text-color) !important;
+  padding: 20px !important;
+}
+
+/* 2. Flattening and cleaning up Datasette's default cards and tables */
+.hd, .ft, .db-table, .sql-write, .metadata {
+  background: transparent !important;
+  border-color: var(--border-color) !important;
+}
+
+/* Stripping table styling back to a strict, minimal ledger layout */
+table.rows-and-columns {
+  border-collapse: collapse !important;
+  background: transparent !important;
+  width: 100% !important;
+  margin-top: 20px;
+}
+
+table.rows-and-columns th {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+  font-size: 0.85rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--accent-bg) !important;
+  border: 1px solid var(--border-color) !important;
+  padding: 8px 12px !important;
+}
+
+table.rows-and-columns td {
+  border: 1px solid var(--border-color) !important;
+  padding: 8px 12px !important;
+  font-size: 0.95rem !important;
+}
+
+/* 3. Link styling — scoped to page content to avoid nav/facet/header links */
+a {
+  color: var(--link-color) !important;
+  text-decoration: none !important;
+}
+
+.content a {
+  border-bottom: 1px solid var(--text-color);
+}
+
+.content a:hover {
+  border-bottom-style: dashed;
+}
+
+/* Code cells look like raw terminal blocks */
+code, pre {
+  font-family: ui-monospace, monospace !important;
+  background: var(--accent-bg) !important;
+  border-radius: 0px !important; /* No rounded corners allowed */
+}
+
+/* Nav — override Datasette's white-on-dark defaults for paper background */
+.hd, .hd nav, .hd a, .hd summary, .hd p, .hd svg {
+  color: #1a1a1a !important;
+  fill: #1a1a1a !important;
+}
+
+.hd details.details-menu > summary {
+  cursor: pointer !important;
+  list-style: none !important;
+  font-size: 0.85rem !important;
+  font-weight: 600 !important;
+}
+
+/* Navigation dropdowns — dark so they're visible on the paper background */
+.nav-menu-inner {
+  background: #1a1a1a !important;
+  border: 1px solid #444 !important;
+  border-radius: 3px !important;
+}
+
+.nav-menu-inner ul {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem 0;
+}
+
+.nav-menu-inner a,
+.nav-menu-inner button {
+  color: #f0e8d0 !important;
+  border-bottom: none !important;
+  display: block;
+  padding: 0.4rem 1rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: inherit;
+}
+
+.nav-menu-inner a:hover,
+.nav-menu-inner button:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-bottom: none !important;
+}
+
+/* Agent chat UI — adapt to paper theme */
+.agent-message-assistant {
+  background: rgba(255, 255, 255, 0.5) !important;
+  color: var(--text-color) !important;
+  border: 1px solid var(--border-color) !important;
+}
+
+.agent-message-assistant .agent-message-content pre,
+.agent-message-assistant .agent-message-content code {
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+
+.agent-message-assistant .agent-message-content th {
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+
+.agent-tool-call,
+.agent-tool-result {
+  background: rgba(255, 255, 255, 0.4) !important;
+  border-color: var(--border-color) !important;
+}
+
+.agent-input textarea {
+  background: rgba(255, 255, 255, 0.6) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-color) !important;
+}
+
+.agent-new-chat textarea {
+  background: rgba(255, 255, 255, 0.6) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-color) !important;
+}
+
+.export-menu {
+  background: #1a1a1a !important;
+  border-color: #333 !important;
+}
+
+.export-menu-btn {
+  color: #f0e8d0 !important;
+}
+
+.export-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Form elements stripped down */
+select, input[type="text"], input[type="search"] {
+  background: var(--bg-color) !important;
+  border: 1px solid var(--text-color) !important;
+  border-radius: 0px !important;
+  padding: 6px 10px !important;
+}

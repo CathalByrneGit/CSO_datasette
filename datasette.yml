@@ -1,0 +1,30 @@
+extra_css_urls:
+  - /static/custom.css
+
+plugins:
+  dogsheep-beta:
+    database: search
+    config_file: dogsheep-beta.yml
+  datasette-llm:
+    default_model: "openrouter/deepseek/deepseek-v4-flash"
+
+settings:
+  default_allow_sql: true
+  sql_time_limit_ms: 15000
+  max_returned_rows: 15000
+  facet_time_limit_ms: 3000
+  suggest_facets: true
+
+databases:
+  curated:
+    title: "CSO Curated Tables"
+    description: "Pre-loaded Central Statistics Office (Ireland) datasets from PxStat"
+    tables:
+      _pxstat_meta:
+        hidden: true
+      pxstat_catalog:
+        title: "CSO PxStat Full Catalog (12,686 tables)"
+        description: "Search this table to find PxStat matrix codes to load. Use the search_index table in the search database for full-text search with stemming."
+  user_tables:
+    title: "User-loaded Tables (this session)"
+    description: "Tables loaded by you from CSO PxStat — reset when the server restarts"

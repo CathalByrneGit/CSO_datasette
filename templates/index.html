@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}CSO Datasette — Ireland Open Data Explorer{% endblock %}
+
+{% block extra_head %}
+{{ super() }}
+<style>
+  .home-wrap { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+
+  .home-intro {
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 2rem;
+    background: rgba(255,255,255,0.35);
+  }
+  .home-intro p { margin: 0 0 1rem; font-size: 1.05rem; line-height: 1.6; }
+  .home-intro p:last-child { margin-bottom: 0; }
+
+  .home-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 1.25rem; }
+  .home-btn {
+    display: inline-block;
+    padding: 0.55rem 1.1rem;
+    border: 1px solid var(--text-color) !important;
+    border-bottom-width: 1px !important;
+    font-size: 0.95rem;
+    font-weight: 600;
+    background: var(--text-color);
+    color: var(--bg-color) !important;
+    border-radius: 3px;
+    text-decoration: none;
+  }
+  .home-btn:hover { opacity: 0.82; border-bottom-style: solid !important; }
+  .home-btn-outline {
+    background: transparent;
+    color: var(--text-color) !important;
+  }
+
+  .home-section { margin-bottom: 2rem; }
+  .home-section h2 { font-size: 0.78rem; font-family: ui-monospace, monospace; text-transform: uppercase; letter-spacing: 0.1em; color: #888; margin: 0 0 0.75rem; }
+
+  .db-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
+  .db-card {
+    display: block;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 1rem 1.25rem;
+    background: rgba(255,255,255,0.3);
+    border-bottom: 1px solid var(--border-color) !important;
+    text-decoration: none !important;
+  }
+  .db-card:hover { background: rgba(255,255,255,0.55); border-bottom-style: solid !important; }
+  .db-card h3 { margin: 0 0 0.3rem; font-size: 1rem; }
+  .db-card p { margin: 0; font-size: 0.85rem; color: #666; line-height: 1.45; }
+
+  .curated-list { list-style: none; padding: 0; margin: 0; }
+  .curated-list li {
+    display: flex; align-items: baseline; gap: 0.6rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.92rem;
+  }
+  .curated-list li:last-child { border-bottom: none; }
+  .curated-list code { font-size: 0.78rem; color: #888; min-width: 52px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="home-wrap">
+
+  <div class="home-intro">
+    <p>Browse, query and cross-reference statistics from the <strong>Central Statistics Office of Ireland</strong> via the live PxStat API.</p>
+    <p>Ten curated datasets are pre-loaded and ready to query. Use the loader to pull any of the 12,000+ PxStat tables into an in-memory database on demand, or search the full catalog by title.</p>
+    <div class="home-actions">
+      <a class="home-btn" href="/-/pxstat">Load a PxStat table &rarr;</a>
+    </div>
+  </div>
+
+  <div class="home-section">
+    <h2>Databases</h2>
+    <div class="db-grid">
+      {% for database in databases %}
+        {% set db_meta = metadata.get("databases", {}).get(database.name, {}) %}
+        <a class="db-card" href="{{ urls.database(database.name) }}">
+          <h3>{{ db_meta.title or database.name }}</h3>
+          {% if db_meta.description %}<p>{{ db_meta.description }}</p>{% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="home-section">
+    <h2>Pre-loaded curated tables</h2>
+    <ul class="curated-list">
+      <li><code>E2003</code> <span>Population Estimates by Age, Sex and Year</span></li>
+      <li><code>PEA01</code> <span>Population by Region and Year</span></li>
+      <li><code>QLF01</code> <span>Quarterly Labour Force Survey — Employment &amp; Unemployment</span></li>
+      <li><code>MUM01</code> <span>Monthly Unemployment Estimates</span></li>
+      <li><code>HPM09</code> <span>Residential Property Price Index</span></li>
+      <li><code>CPM01</code> <span>Consumer Price Index by Category and Month</span></li>
+      <li><code>IIA01</code> <span>Survey on Income and Living Conditions</span></li>
+      <li><code>TOA01</code> <span>Overseas Travel Arrivals by Country of Residence</span></li>
+      <li><code>TSM06</code> <span>Merchandise Trade — Imports and Exports</span></li>
+      <li><code>AAA23</code> <span>Area, Yield and Production of Crops</span></li>
+    </ul>
+  </div>
+
+</div>
+{% endblock %}

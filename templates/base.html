@@ -1,0 +1,21 @@
+{% extends "default:base.html" %}
+
+{% block extra_head %}
+  <style>
+    /* Quick structural adjustment to center content like maxleiter's container */
+    .page-header, .metadata, .table-wrapper, .sql-write {
+      max-width: 960px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+  </style>
+{% endblock %}
+
+{% block header %}
+  <header style="max-width: 960px; margin: 40px auto; border-bottom: 1px dashed var(--border-color); padding-bottom: 20px;">
+    <h1 style="font-size: 1.5rem; font-weight: 700; margin: 0;"><a href="/">{{ metadata.title or "Data Index" }}</a></h1>
+    <p style="font-family: ui-monospace, monospace; font-size: 0.85rem; margin: 5px 0 0 0; color: #555;">
+      Authenticated Reader Engine // Built lightweight.
+    </p>
+  </header>
+{% endblock %}

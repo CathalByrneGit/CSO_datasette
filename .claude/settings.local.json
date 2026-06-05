@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(pip show *)",
+      "PowerShell(llm keys *)",
+      "PowerShell(python -c \"import datasette_agent; print\\(datasette_agent.__file__\\)\" 2>&1; python -c \"from datasette_agent import hookimpl; import inspect; src = inspect.getfile\\(hookimpl\\); print\\(src\\)\" 2>&1)",
+      "Bash(bash run.sh)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Stop-Process *)",
+      "Bash(uv --version)",
+      "Bash(pip list *)",
+      "Bash(.venv/Scripts/python.exe -c \"import datasette_llm; import inspect; print\\(inspect.getfile\\(datasette_llm\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import datasette_agent; print\\('version:', datasette_agent.__version__\\)\")",
+      "Bash(.venv/Scripts/pip show *)",
+      "Bash(.venv/Scripts/python.exe -c \"import datasette_agent.tools; import inspect; print\\(inspect.getsource\\(datasette_agent.tools\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import datasette_agent; import inspect; print\\(inspect.getsource\\(datasette_agent\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(gh repo *)",
+      "Bash(python -c \"import json,sys; print\\(json.load\\(sys.stdin\\)['readme']['text']\\)\")",
+      "Bash(gh api *)",
+      "Bash(python -c \"import sys,base64; print\\(base64.b64decode\\(sys.stdin.read\\(\\)\\).decode\\(\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -m pip index versions llm-openrouter)",
+      "Bash(.venv/Scripts/python.exe -m llm models)",
+      "Bash(findstr /i openrouter)"
+    ]
+  }
+}
