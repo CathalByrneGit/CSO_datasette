@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+
+{% block title %}Agent - {{ conversation.title or "Chat" }}{% endblock %}
+
+{% block extra_head %}
+{{ super() }}
+<link type="text/css" rel="stylesheet" href="/-/static-plugins/datasette-agent/agent.css">
+{% endblock %}
+
+{% block content %}
+<div class="agent-chat" data-conversation-id="{{ conversation_id }}"{% if background_agent %} data-poll-url="/-/agent/{{ conversation_id }}/poll" data-agent-status="{{ background_agent.status }}" data-message-count="{{ messages|length }}"{% endif %}>
+  <div class="agent-header">
+    <a href="/-/agent">&larr; Back</a>
+    <h1>{{ conversation.title or "Chat" }}</h1>
+    <div class="chat-export-menu" data-markdown-url="/-/agent/{{ conversation_id }}/markdown" data-title="{{ conversation.title or 'chat' }}"></div>
+  </div>
+
+  <div class="agent-messages" id="messages">
+    {% set in_tool_group = namespace(value=false) %}
+    {% for msg in messages %}
+      {% if msg.role in ("tool_call", "tool_result") %}
+        {% if not in_tool_group.value %}
+        <div class="agent-tool-group">
+          {% set in_tool_group.value = true %}
+        {% endif %}
+        {% if msg.role == "tool_call" %}
+        <details class="agent-tool-call">
+          <summary>Tool: {{ msg.tool_name }}</summary>
+          <pre>{{ msg.tool_arguments }}</pre>
+        </details>
+        {% elif msg.role == "tool_result" %}
+        {% set html_content = msg.tool_output | agent_extract_html %}
+        {% set edit_sql_url = msg.tool_output | agent_extract_edit_sql_url %}
+        {% if html_content %}
+        </div>
+        {% set in_tool_group.value = false %}
+        <div class="agent-rich-result">
+          {{ html_content | safe }}
+          {% if edit_sql_url %}
+          <p class="agent-sql-edit-link"><a href="{{ edit_sql_url }}" target="_blank" rel="noopener">View SQL query</a></p>
+          {% endif %}
+        </div>
+        <div class="agent-tool-group">
+        {% set in_tool_group.value = true %}
+        {% endif %}
+        <details class="agent-tool-result">
+          <summary>Result: {{ msg.tool_name }}</summary>
+          <pre>{{ msg.tool_output | agent_pretty_json }}</pre>
+          {% if edit_sql_url and not html_content %}
+          <p class="agent-sql-edit-link"><a href="{{ edit_sql_url }}" target="_blank" rel="noopener">View SQL query</a></p>
+          {% endif %}
+        </details>
+        {% endif %}
+      {% else %}
+        {% if in_tool_group.value %}
+        </div>
+        {% set in_tool_group.value = false %}
+        {% endif %}
+        {% if msg.role == "user" %}
+        <div class="agent-message agent-message-user">
+          <div class="agent-message-content">{{ msg.content }}</div>
+        </div>
+        {% elif msg.role == "assistant" %}
+        <div class="agent-message agent-message-assistant">
+          <div class="agent-message-content" data-md="{{ msg.content }}">{{ msg.content }}</div>
+          <button class="copy-msg-btn" title="Copy as markdown">Copy</button>
+        </div>
+        {% elif msg.role == "reasoning" and msg.content %}
+        <details class="agent-reasoning">
+          <summary>Thinking</summary>
+          <div class="agent-reasoning-content">{{ msg.content }}</div>
+        </details>
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+    {% if in_tool_group.value %}
+    </div>
+    {% endif %}
+  </div>
+
+  {% if not background_agent %}
+  <form id="chat-form" class="agent-input">
+    <textarea id="message-input" placeholder="Type a message..." rows="2"></textarea>
+    <button type="submit" id="send-btn">Send</button>
+  </form>
+  {% endif %}
+</div>
+
+<script type="module" src="/-/static-plugins/datasette-agent/agent.js"></script>
+<script src="/-/static-plugins/datasette-agent/chat-export.js"></script>
+
+<script>
+// Copy button: reads raw markdown from data-md before agent.js renders it
+document.addEventListener('click', function (e) {
+  const btn = e.target.closest('.copy-msg-btn');
+  if (!btn) return;
+  const md = btn.previousElementSibling.dataset.md;
+  if (!md) return;
+  navigator.clipboard.writeText(md).then(function () {
+    btn.textContent = 'Copied!';
+    setTimeout(function () { btn.textContent = 'Copy'; }, 2000);
+  });
+});
+
+// Also add copy buttons to messages injected during streaming
+new MutationObserver(function (mutations) {
+  mutations.forEach(function (m) {
+    m.addedNodes.forEach(function (node) {
+      if (node.classList && node.classList.contains('agent-message-assistant')) {
+        if (!node.querySelector('.copy-msg-btn')) {
+          const btn = document.createElement('button');
+          btn.className = 'copy-msg-btn';
+          btn.title = 'Copy as markdown';
+          btn.textContent = 'Copy';
+          node.appendChild(btn);
+        }
+      }
+    });
+  });
+}).observe(document.getElementById('messages') || document.body, { childList: true });
+</script>
+
+{% if not background_agent %}
+<script type="module">
+const conversationId = document.querySelector(".agent-chat").dataset.conversationId;
+const pending = sessionStorage.getItem("agent_pending_message");
+if (pending) {
+  sessionStorage.removeItem("agent_pending_message");
+  window.sendMessage(conversationId, pending);
+}
+</script>
+{% else %}
+<script>
+(function () {
+  const chat = document.querySelector(".agent-chat");
+  if (!chat || !chat.dataset.pollUrl) return;
+  const pollUrl = chat.dataset.pollUrl;
+  const convId = chat.dataset.conversationId;
+  const messagesEl = document.getElementById("messages");
+
+  const initialStatus = chat.dataset.agentStatus || "pending";
+  const initialCount = parseInt(chat.dataset.messageCount || "0", 10);
+
+  const SCROLL_KEY = `agent-bg-${convId}-scroll`;
+
+  function nearBottom() {
+    return (
+      messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight
+      < 50
+    );
+  }
+
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SCROLL_KEY) || "null");
+    if (saved && saved.atBottom) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    } else if (saved && typeof saved.top === "number") {
+      messagesEl.scrollTop = saved.top;
+    } else {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  } catch (e) {}
+
+  messagesEl.addEventListener("scroll", () => {
+    sessionStorage.setItem(
+      SCROLL_KEY,
+      JSON.stringify({top: messagesEl.scrollTop, atBottom: nearBottom()})
+    );
+  });
+
+  const terminal = (s) => s === "completed" || s === "error";
+  if (terminal(initialStatus)) {
+    sessionStorage.removeItem(SCROLL_KEY);
+    return;
+  }
+
+  let polling = true;
+  async function poll() {
+    if (!polling) return;
+    try {
+      const resp = await fetch(pollUrl);
+      if (resp.ok) {
+        const data = await resp.json();
+        const statusChanged = data.agent_status !== initialStatus;
+        const countChanged = (data.message_count || 0) !== initialCount;
+        if (statusChanged || countChanged) {
+          polling = false;
+          window.location.reload();
+          return;
+        }
+      }
+    } catch (e) {}
+    if (polling) setTimeout(poll, 2000);
+  }
+  setTimeout(poll, 2000);
+})();
+</script>
+{% endif %}
+{% endblock %}

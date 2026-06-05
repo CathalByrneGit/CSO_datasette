@@ -117,6 +117,34 @@ code, pre {
   border-bottom: none !important;
 }
 
+/* Copy button on assistant messages */
+.agent-message-assistant {
+  position: relative;
+}
+
+.copy-msg-btn {
+  display: none;
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  background: rgba(255,255,255,0.7);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--text-color);
+  font-family: ui-monospace, monospace;
+}
+
+.agent-message-assistant:hover .copy-msg-btn {
+  display: block;
+}
+
+.copy-msg-btn:hover {
+  background: rgba(255,255,255,0.95);
+}
+
 /* Agent chat UI — adapt to paper theme */
 .agent-message-assistant {
   background: rgba(255, 255, 255, 0.5) !important;
