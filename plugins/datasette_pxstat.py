@@ -7,6 +7,7 @@ Routes added:
   POST /-/pxstat/load       fetch a table by code and redirect to it
 
 Agent tools (when datasette-agent is installed):
+  search_pxstat_catalog     search the catalog for table codes by keyword
   suggest_pxstat_joins      find joinable columns across loaded tables
   load_pxstat_table         load a PxStat table by code from within the agent
 """
