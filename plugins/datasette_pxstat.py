@@ -307,12 +307,27 @@ async def _tool_search_catalog(datasette, actor, query: str = ""):
         loaded_user = [t for t in await db.table_names() if t.startswith("px_")]
     result["loaded_user_tables"] = loaded_user
 
-    # Catalog search
+    # Catalog search — prefer dogsheep-beta FTS5 index (stemming + ranking),
+    # fall back to LIKE on curated.pxstat_catalog if search db is unavailable.
     catalog_matches = []
-    if "curated" in datasette.databases:
+    words = [w for w in query.strip().split() if w]
+
+    if words and "search" in datasette.databases:
+        try:
+            db = datasette.get_database("search")
+            fts_query = " AND ".join(words)
+            rows = await db.execute(
+                "SELECT key, title FROM search WHERE search MATCH ? ORDER BY rank LIMIT 20",
+                [fts_query],
+            )
+            catalog_matches = [{"code": r[0], "title": r[1]} for r in rows.rows]
+            result["search_method"] = "fts5"
+        except Exception:
+            pass  # fall through to LIKE below
+
+    if not catalog_matches and "curated" in datasette.databases:
         db = datasette.get_database("curated")
         if "pxstat_catalog" in await db.table_names():
-            words = [w for w in query.strip().split() if w]
             if words:
                 conditions = " AND ".join("(title LIKE ? OR code LIKE ?)" for _ in words)
                 params = [p for w in words for p in (f"%{w}%", f"%{w}%")]
@@ -321,13 +336,15 @@ async def _tool_search_catalog(datasette, actor, query: str = ""):
                     f"ORDER BY title LIMIT 20",
                     params,
                 )
-                result["catalog_search_query"] = query
             else:
                 rows = await db.execute(
                     "SELECT code, title FROM pxstat_catalog ORDER BY title LIMIT 20"
                 )
             catalog_matches = [{"code": r[0], "title": r[1]} for r in rows.rows]
+            result["search_method"] = "like"
 
+    if words:
+        result["catalog_search_query"] = query
     result["catalog_matches"] = catalog_matches
     result["note"] = (
         "Use load_pxstat_table with a 'code' value to load any catalog entry."
