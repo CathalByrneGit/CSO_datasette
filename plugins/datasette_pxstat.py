@@ -335,14 +335,18 @@ def register_agent_tools(datasette):
                 "Full-text search the CSO PxStat catalog of 12,000+ tables by keyword. "
                 "Returns matching table codes and titles ranked by relevance. "
                 "Use this to discover relevant tables before loading them with load_pxstat_table. "
-                "Accepts plain keywords — e.g. 'housing prices', 'unemployment', 'CPI inflation'."
+                "IMPORTANT: use short single keywords for best results — the index is exact-match "
+                "so 'house' finds far more than 'housing prices'. Run several focused searches "
+                "with different terms to explore a topic: for housing try 'house', 'rent', "
+                "'mortgage', 'property', 'dwelling' as separate calls. "
+                "Single words always outperform phrases."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Keywords to search for in table titles and codes",
+                        "description": "A single short keyword, e.g. 'house', 'rent', 'trade', 'birth'",
                     },
                     "limit": {
                         "type": "integer",
@@ -394,6 +398,11 @@ async def _tool_search_catalog(datasette, actor, query: str, limit: int = 20):
     if "search" not in datasette.databases:
         return json.dumps({"error": "Search index not available."})
     limit = min(max(1, int(limit)), 50)
+    # Auto-append FTS5 prefix wildcard for plain single-word queries so that
+    # e.g. "house" matches house/houses/housing/household automatically.
+    q = query.strip()
+    if q and ' ' not in q and not any(c in q for c in '*"()'):
+        q = q + '*'
     try:
         rows = await datasette.get_database("search").execute(
             "SELECT si.key, si.title "
@@ -401,7 +410,7 @@ async def _tool_search_catalog(datasette, actor, query: str, limit: int = 20):
             "JOIN search_index_fts fts ON si.rowid = fts.rowid "
             "WHERE search_index_fts MATCH ? "
             "ORDER BY rank LIMIT ?",
-            [query, limit],
+            [q, limit],
         )
         results = [{"code": r[0], "title": r[1]} for r in rows.rows]
         if not results:
