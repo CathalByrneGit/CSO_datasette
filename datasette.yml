@@ -11,7 +11,7 @@ plugins:
     max_sessions: 8
     wall_clock_timeout_seconds: 5.0
     memory_bytes: 16777216
-    fuel: 10000000
+    fuel: 50000000
 
 settings:
   default_allow_sql: true
