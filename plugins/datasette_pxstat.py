@@ -2,9 +2,10 @@
 datasette-pxstat: load CSO PxStat tables on demand into an in-memory database.
 
 Routes added:
-  GET  /-/pxstat            catalog browser + load form
-  GET  /-/pxstat/catalog    proxy CSO catalog JSON to the browser
-  POST /-/pxstat/load       fetch a table by code and redirect to it
+  GET  /-/pxstat                         catalog browser + load form
+  POST /-/pxstat/load                    fetch a table by code and redirect to it
+  GET  /-/pxstat/subjects                Theme > Subject tree (JSON)
+  GET  /-/pxstat/browse/<sbj_code>       matrices for a subject (JSON)
 
 Agent tools (when datasette-agent is installed):
   search_pxstat_catalog     search the catalog for table codes by keyword
@@ -16,9 +17,45 @@ import csv
 import io
 import json
 import re
+import sys
 
-import httpx
 from datasette import hookimpl, Response
+
+# ---------------------------------------------------------------------------
+# HTTP helpers — pyfetch (Pyodide/browser) or httpx (server)
+# ---------------------------------------------------------------------------
+
+def _is_pyodide():
+    return sys.platform == "emscripten"
+
+
+async def _get(url):
+    """HTTP GET — returns (status_code, bytes)."""
+    if _is_pyodide():
+        from pyodide.http import pyfetch
+        resp = await pyfetch(url)
+        return resp.status, await resp.bytes()
+    else:
+        import httpx
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.get(url)
+        return r.status_code, r.content
+
+
+async def _post_json(url, payload):
+    """HTTP POST with JSON body — returns (status_code, parsed_json)."""
+    if _is_pyodide():
+        from pyodide.http import pyfetch
+        resp = await pyfetch(url, method="POST",
+                             headers={"Content-Type": "application/json"},
+                             body=json.dumps(payload))
+        return resp.status, await resp.json()
+    else:
+        import httpx
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(url, json=payload)
+        return r.status_code, r.json()
+
 
 try:
     from datasette_agent.tools import AgentTool
@@ -53,7 +90,6 @@ def startup(datasette):
 def register_routes():
     return [
         (r"^/-/pxstat$", pxstat_index),
-        (r"^/-/pxstat/catalog$", pxstat_catalog),
         (r"^/-/pxstat/load$", pxstat_load),
         (r"^/-/pxstat/subjects$", pxstat_subjects),
         (r"^/-/pxstat/browse/(?P<sbj_code>\d+)$", pxstat_browse_subject),
@@ -98,23 +134,6 @@ async def pxstat_index(datasette, request):
     )
 
 
-async def pxstat_catalog(datasette, request):
-    """Proxy the CSO ReadCollection call so the browser avoids CORS issues."""
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                CATALOG_URL,
-                json={
-                    "jsonrpc": "2.0",
-                    "method": "PxStat.Data.Cube_API.ReadCollection",
-                    "params": {"language": "en"},
-                },
-            )
-        return Response.json(resp.json())
-    except Exception as exc:
-        return Response.json({"error": str(exc)}, status=500)
-
-
 async def pxstat_load(datasette, request):
     if request.method != "POST":
         return Response.redirect("/-/pxstat")
@@ -128,20 +147,17 @@ async def pxstat_load(datasette, request):
     url = DATASET_URL.format(code=code)
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(url)
-    except httpx.TimeoutException:
-        return _error_response(f"Request timed out fetching table {code}.")
-    except httpx.RequestError as exc:
+        status, body = await _get(url)
+    except Exception as exc:
         return _error_response(f"Network error: {exc}")
 
-    if resp.status_code == 404:
+    if status == 404:
         return _error_response(f"Table <strong>{code}</strong> was not found on PxStat.")
-    if resp.status_code != 200:
-        return _error_response(f"CSO API returned HTTP {resp.status_code} for table {code}.")
+    if status != 200:
+        return _error_response(f"CSO API returned HTTP {status} for table {code}.")
 
     # Decode with utf-8-sig to strip any UTF-8 BOM from CSO CSV exports
-    csv_text = resp.content.decode("utf-8-sig")
+    csv_text = body.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(csv_text))
     rows = list(reader)
     columns = list(reader.fieldnames or [])
@@ -191,14 +207,12 @@ async def pxstat_subjects(datasette, request):
 
     # Fallback: live API call
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                CATALOG_URL,
-                json={"jsonrpc": "2.0",
-                      "method": "PxStat.System.Navigation.Navigation_API.Read",
-                      "params": {"LngIsoCode": "en"}},
-            )
-        tree = resp.json()["result"]
+        _, data = await _post_json(CATALOG_URL, {
+            "jsonrpc": "2.0",
+            "method": "PxStat.System.Navigation.Navigation_API.Read",
+            "params": {"LngIsoCode": "en"},
+        })
+        tree = data["result"]
         themes = [
             {"code": t["ThmCode"], "value": t["ThmValue"],
              "subjects": [{"code": s["SbjCode"], "value": s["SbjValue"]}
@@ -214,14 +228,11 @@ async def pxstat_browse_subject(datasette, request):
     """Return matrices for a given subject code via Navigation_API.Search."""
     sbj_code = int(request.url_vars["sbj_code"])
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(
-                CATALOG_URL,
-                json={"jsonrpc": "2.0",
-                      "method": "PxStat.System.Navigation.Navigation_API.Search",
-                      "params": {"LngIsoCode": "en", "SbjCode": sbj_code}},
-            )
-        data = resp.json()
+        _, data = await _post_json(CATALOG_URL, {
+            "jsonrpc": "2.0",
+            "method": "PxStat.System.Navigation.Navigation_API.Search",
+            "params": {"LngIsoCode": "en", "SbjCode": sbj_code},
+        })
         if "result" not in data:
             return Response.json({"error": "Navigation API error"}, status=502)
         matrices = [{"code": m["MtrCode"], "title": m["MtrTitle"]} for m in data["result"]]
@@ -407,16 +418,7 @@ _SKIP_COLS = {
 
 
 async def _tool_suggest_joins(datasette, actor):
-    """
-    Find joinable columns across all PxStat tables in curated + user_tables.
-
-    Detects both exact name matches AND columns with different names that share
-    significant value overlap (e.g. CensusYear ↔ Year, County ↔ Region).
-    """
     db_names = [n for n in ("curated", "user_tables") if n in datasette.databases]
-
-    # Collect columns + sampled distinct values per table
-    # table_info: {(db_name, tbl): {col: frozenset(sample_values)}}
     table_info = {}
 
     for db_name in db_names:
@@ -458,13 +460,10 @@ async def _tool_suggest_joins(datasette, actor):
                         continue
 
                     exact_match = col_a == col_b
-
-                    # Name-based fuzzy: one name contains the other (case-insensitive)
                     a_norm = col_a.lower().replace(" ", "").replace("_", "")
                     b_norm = col_b.lower().replace(" ", "").replace("_", "")
                     name_fuzzy = a_norm in b_norm or b_norm in a_norm
 
-                    # Value overlap: Jaccard similarity
                     intersection = len(vals_a & vals_b)
                     union = len(vals_a | vals_b)
                     jaccard = intersection / union if union else 0.0
@@ -486,7 +485,6 @@ async def _tool_suggest_joins(datasette, actor):
             if not join_candidates:
                 continue
 
-            # Build example SQL using the best candidate (exact > fuzzy > value)
             best = sorted(
                 join_candidates,
                 key=lambda c: (c["match_type"] != "exact_name", c["match_type"] != "similar_name", -c["value_overlap_pct"])
@@ -524,15 +522,14 @@ async def _tool_load_table(datasette, actor, code: str):
 
     url = DATASET_URL.format(code=code)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(url)
+        status, body = await _get(url)
     except Exception as exc:
         return json.dumps({"error": f"Network error: {exc}"})
 
-    if resp.status_code != 200:
-        return json.dumps({"error": f"Table {code} not found on PxStat (HTTP {resp.status_code})."})
+    if status != 200:
+        return json.dumps({"error": f"Table {code} not found on PxStat (HTTP {status})."})
 
-    csv_text = resp.content.decode("utf-8-sig")
+    csv_text = body.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(csv_text))
     rows = list(reader)
     columns = list(reader.fieldnames or [])
