@@ -7,6 +7,7 @@ Routes added:
   POST /-/pxstat/load       fetch a table by code and redirect to it
 
 Agent tools (when datasette-agent is installed):
+  search_pxstat_catalog     search the catalog for table codes by keyword
   suggest_pxstat_joins      find joinable columns across loaded tables
   load_pxstat_table         load a PxStat table by code from within the agent
 """
@@ -219,6 +220,31 @@ def register_agent_tools(datasette):
         return []
     return [
         AgentTool(
+            name="search_pxstat_catalog",
+            description=(
+                "Search the CSO PxStat catalog (~12,600 tables) by keyword to discover table codes "
+                "and titles. Also lists tables already loaded in the curated and user_tables databases "
+                "so you know what's ready to query. "
+                "Call this at the start of any data task to find relevant table codes before using "
+                "load_pxstat_table. Pass multiple words to narrow results (all words must appear)."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Keyword(s) to search table titles, e.g. 'population', "
+                            "'housing price', 'unemployment quarterly'. "
+                            "Omit to just list currently loaded tables."
+                        ),
+                    }
+                },
+                "required": [],
+            },
+            fn=_tool_search_catalog,
+        ),
+        AgentTool(
             name="suggest_pxstat_joins",
             description=(
                 "Scan all PxStat tables loaded in curated and user_tables databases and "
@@ -249,6 +275,68 @@ def register_agent_tools(datasette):
             fn=_tool_load_table,
         ),
     ]
+
+
+async def _tool_search_catalog(datasette, actor, query: str = ""):
+    """Search pxstat_catalog by keyword and report all currently loaded tables."""
+    result = {}
+
+    # Tables already loaded in curated (persistent pre-selected datasets)
+    loaded_curated = []
+    if "curated" in datasette.databases:
+        db = datasette.get_database("curated")
+        tbl_names = await db.table_names()
+        px_tables = [t for t in tbl_names if t.startswith("px_")]
+        if px_tables:
+            meta = {}
+            if "_pxstat_meta" in tbl_names:
+                meta_rows = await db.execute(
+                    "SELECT table_name, code, description FROM _pxstat_meta"
+                )
+                meta = {r[0]: {"code": r[1], "description": r[2]} for r in meta_rows.rows}
+            for tbl in px_tables:
+                entry = {"table": tbl}
+                entry.update(meta.get(tbl, {}))
+                loaded_curated.append(entry)
+    result["loaded_curated_tables"] = loaded_curated
+
+    # Tables loaded in the current session by the user
+    loaded_user = []
+    if "user_tables" in datasette.databases:
+        db = datasette.get_database("user_tables")
+        loaded_user = [t for t in await db.table_names() if t.startswith("px_")]
+    result["loaded_user_tables"] = loaded_user
+
+    # Catalog search
+    catalog_matches = []
+    if "curated" in datasette.databases:
+        db = datasette.get_database("curated")
+        if "pxstat_catalog" in await db.table_names():
+            words = [w for w in query.strip().split() if w]
+            if words:
+                conditions = " AND ".join("(title LIKE ? OR code LIKE ?)" for _ in words)
+                params = [p for w in words for p in (f"%{w}%", f"%{w}%")]
+                rows = await db.execute(
+                    f"SELECT code, title FROM pxstat_catalog WHERE {conditions} "
+                    f"ORDER BY title LIMIT 20",
+                    params,
+                )
+                result["catalog_search_query"] = query
+            else:
+                rows = await db.execute(
+                    "SELECT code, title FROM pxstat_catalog ORDER BY title LIMIT 20"
+                )
+            catalog_matches = [{"code": r[0], "title": r[1]} for r in rows.rows]
+
+    result["catalog_matches"] = catalog_matches
+    result["note"] = (
+        "Use load_pxstat_table with a 'code' value to load any catalog entry."
+        if catalog_matches else
+        "No catalog matches found. Try different keywords."
+        if query.strip() else
+        "Pass a 'query' parameter to search the catalog by topic."
+    )
+    return json.dumps(result)
 
 
 _SKIP_COLS = {
