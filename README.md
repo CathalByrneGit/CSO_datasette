@@ -1,12 +1,12 @@
 # CSO Datasette
 
-A local [Datasette](https://datasette.io/) explorer for Central Statistics Office (Ireland) data from [PxStat](https://data.cso.ie/).
+A local [Datasette](https://datasette.io/) explorer for Central Statistics Office (Ireland) data from [PxStat](https://data.cso.ie/), with an AI agent for natural-language querying, computation, and charting.
 
 Serves three databases:
 
 | Database | Contents |
 |---|---|
-| `curated` | Pre-loaded CSO datasets (persistent, refreshed via ETL) |
+| `curated` | Pre-loaded CSO datasets + full PxStat catalog + subject tree (persistent, refreshed via ETL) |
 | `search` | Full-text search index over the full PxStat catalog |
 | `user_tables` | Tables you load on demand — in-memory, reset on restart |
 
@@ -15,7 +15,7 @@ Serves three databases:
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/) — handles the Python environment and dependencies
-- A Gemini API key (for the LLM query assistant) — stored via `llm keys set gemini`
+- An LLM API key — stored via `llm keys set openrouter` (currently using **deepseek-v4-flash** via OpenRouter)
 
 ---
 
@@ -27,7 +27,7 @@ uv sync
 
 ### First-time ETL
 
-**1. Build the catalog and FTS index** — fetches the full CSO PxStat catalog (~12,600 tables) into `curated.db` and builds the `search.db` full-text index:
+**1. Build the catalog, FTS index, and subject tree** — fetches the full CSO PxStat catalog (~12,600 tables) into `curated.db`, builds the `search.db` full-text index, and stores the Theme → Subject navigation tree:
 
 ```bash
 uv run python etl/build_catalog.py
@@ -84,14 +84,40 @@ The `--root` flag prints a one-time login URL in the terminal on startup — use
 
 ---
 
-## Loading tables on demand
+## Loading tables on demand (`/-/pxstat`)
 
-Go to **Load PxStat Table** in the nav menu (or `/-/pxstat`). You can:
+Go to **Load PxStat Table** in the nav menu. You can:
 
 - Type a matrix code directly (e.g. `HPM09`) and click **Load table**
-- Browse and search the full catalog, then click **Load →** on any row
+- **Browse by theme** — 9 CSO themes (Business Sectors, Census, Economy, …) with subject chips beneath each; click a subject to load its tables into the results list
+- Search the full catalog by keyword — filters whichever view is active
 
-Loaded tables appear in the `user_tables` database and are available for SQL queries and joins until the server restarts.
+Loaded tables appear in `user_tables` with their CSO description shown beneath the table name. They are available for SQL queries and joins until the server restarts.
+
+---
+
+## AI Agent (`/-/agent`)
+
+The agent has access to the following tools:
+
+| Tool | Purpose |
+|---|---|
+| `search_pxstat_catalog` | Full-text search across 12,000+ PxStat table titles — use this to find relevant tables before loading |
+| `load_pxstat_table` | Fetch a PxStat table by code and load it into `user_tables` |
+| `sql_query` | Run SQL against any database |
+| `suggest_pxstat_joins` | Find joinable columns across loaded PxStat tables |
+| `execute_micropython` | Run sandboxed Python (MicroPython/WASM) for computation SQL can't express — derived stats, growth rates, transformations |
+| `render_chart` | Generate Observable Plot charts (bar, line, dot, area, waffle) from SQL query results |
+
+### Typical agent workflow
+
+1. **Find** — `search_pxstat_catalog("housing prices")` → returns ranked codes and titles
+2. **Load** — `load_pxstat_table("HPM09")` → table available in `user_tables`
+3. **Query** — `sql_query` to filter, aggregate, or join
+4. **Compute** — `execute_micropython` for derived statistics (year-on-year % change, rolling averages, etc.)
+5. **Visualise** — `render_chart` to draw a bar or line chart inline
+
+The MicroPython sandbox has no network or filesystem access. It supports `math`, `json`, `re`, and can query Datasette databases via the built-in `read_only_sql_query()` helper.
 
 ---
 
@@ -100,18 +126,18 @@ Loaded tables appear in the `user_tables` database and are available for SQL que
 ```
 CSO_datasette/
 ├── etl/
-│   ├── build_catalog.py   # fetch catalog + build FTS index
-│   └── load_curated.py    # fetch curated datasets into curated.db
+│   ├── build_catalog.py     # fetch catalog + build FTS index + subject tree
+│   └── load_curated.py      # fetch curated datasets into curated.db
 ├── plugins/
 │   └── datasette_pxstat.py  # /-/pxstat routes + agent tools
 ├── static/
-│   └── custom.css         # custom theme
+│   └── custom.css           # custom theme
 ├── templates/
-│   ├── base.html          # site-wide layout override
-│   └── pxstat_index.html  # PxStat loader page
-├── datasette.yml          # Datasette config (settings, plugin config)
-├── dogsheep-beta.yml      # FTS index config
+│   ├── base.html            # site-wide layout override
+│   └── pxstat_index.html    # PxStat loader page (theme browser + catalog search)
+├── datasette.yml            # Datasette config (settings, plugin config)
+├── dogsheep-beta.yml        # FTS index config
 ├── pyproject.toml
-├── run.ps1                # serve command (PowerShell)
-└── run.sh                 # serve command (bash)
+├── run.ps1                  # serve command (PowerShell)
+└── run.sh                   # serve command (bash)
 ```

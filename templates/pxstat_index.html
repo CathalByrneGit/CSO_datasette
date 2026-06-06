@@ -31,18 +31,19 @@
   }
   .load-form button:hover { opacity: 0.88; }
 
-
-
   .loaded-list     { list-style: none; padding: 0; margin: 0; }
-  .loaded-list li  { padding: 0.4rem 0; border-bottom: 1px solid var(--color-border, #eee); display: flex; align-items: center; gap: 0.75rem; }
+  .loaded-list li  { padding: 0.5rem 0; border-bottom: 1px solid var(--color-border, #eee); }
   .loaded-list li:last-child { border-bottom: none; }
+  .loaded-list .li-row { display: flex; align-items: center; gap: 0.75rem; }
   .loaded-list a   { font-weight: 500; }
   .loaded-list code { font-size: 0.8rem; color: var(--color-text-muted, #777); }
+  .loaded-list .li-desc { font-size: 0.83rem; color: var(--color-text-muted, #666); margin-top: 0.15rem; }
 
   .empty-state { color: var(--color-text-muted, #999); font-style: italic; font-size: 0.9rem; }
 
   #loading-msg { display: none; color: var(--color-text-muted, #666); font-size: 0.9rem; margin-top: 0.5rem; }
 
+  /* Catalog search */
   .cat-search-input {
     width: 100%; box-sizing: border-box;
     padding: 0.5rem 0.75rem;
@@ -51,7 +52,7 @@
     font-size: 1rem;
     margin-bottom: 0.5rem;
   }
-  #search-status { font-size: 0.82rem; color: var(--color-text-muted, #888); margin-bottom: 0.5rem; min-height: 1.2em; }
+  #search-status { font-size: 0.82rem; color: var(--color-text-muted, #888); margin-bottom: 0.5rem; min-height: 1.2em; display: flex; align-items: center; gap: 0.5rem; }
   #search-results { border: 1px solid var(--color-border, #eee); border-radius: 4px; max-height: 380px; overflow-y: auto; }
   .sr-item {
     display: flex; align-items: baseline; gap: 0.6rem;
@@ -71,6 +72,41 @@
   }
   .sr-load-btn:hover { opacity: 0.85; }
   #search-results.is-loading { opacity: 0.5; }
+
+  /* Subject clear badge */
+  .sbj-badge {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    background: #dbeafe; color: #1e40af;
+    border-radius: 999px; padding: 0.1rem 0.55rem;
+    font-size: 0.78rem; font-weight: 500; white-space: nowrap;
+  }
+  .sbj-badge button {
+    background: none; border: none; cursor: pointer;
+    color: #1e40af; padding: 0; font-size: 0.9rem; line-height: 1;
+  }
+
+  /* Theme browser */
+  #theme-browser { }
+  .thm-section { margin-bottom: 1rem; }
+  .thm-section:last-child { margin-bottom: 0; }
+  .thm-label {
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--color-text-muted, #888);
+    margin: 0 0 0.4rem;
+  }
+  .sbj-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .sbj-chip {
+    padding: 0.25rem 0.65rem;
+    border: 1px solid var(--color-border, #ccc);
+    border-radius: 999px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    background: var(--color-bg, #fff);
+    color: var(--color-text, #111);
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .sbj-chip:hover { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; }
+  #theme-browser-loading { color: var(--color-text-muted, #999); font-size: 0.9rem; font-style: italic; }
 </style>
 {% endblock %}
 
@@ -102,20 +138,30 @@
   <div class="pxstat-card">
     <h2>Browse &amp; search the catalog</h2>
     <input id="catalog-search" class="cat-search-input" type="search"
-           placeholder="Filter by code or title…" autocomplete="off" spellcheck="false">
-    <div id="search-status">Loading catalog…</div>
+           placeholder="Filter by code or title, or browse by theme below…" autocomplete="off" spellcheck="false">
+    <div id="search-status"></div>
     <div id="search-results"></div>
+
+    <!-- Theme browser (visible when search is empty and no subject selected) -->
+    <div id="theme-browser" style="margin-top:0.75rem;">
+      <div id="theme-browser-loading">Loading themes…</div>
+    </div>
   </div>
 
   <!-- Already-loaded tables -->
   <div class="pxstat-card">
     <h2>Tables loaded this session</h2>
-    {% if loaded_tables %}
+    {% if loaded %}
       <ul class="loaded-list">
-        {% for tbl in loaded_tables %}
+        {% for tbl in loaded %}
           <li>
-            <a href="/user_tables/{{ tbl }}">{{ tbl }}</a>
-            <code>user_tables</code>
+            <div class="li-row">
+              <a href="/user_tables/{{ tbl.name }}">{{ tbl.name }}</a>
+              <code>user_tables</code>
+            </div>
+            {% if tbl.description %}
+              <div class="li-desc">{{ tbl.description }}</div>
+            {% endif %}
           </li>
         {% endfor %}
       </ul>
@@ -136,25 +182,32 @@ document.getElementById('load-form').addEventListener('submit', function () {
 });
 
 (function () {
-  const searchInput = document.getElementById('catalog-search');
-  const statusEl    = document.getElementById('search-status');
-  const resultsEl   = document.getElementById('search-results');
-  const codeInput   = document.getElementById('code-input');
-  const loadForm    = document.getElementById('load-form');
+  const searchInput   = document.getElementById('catalog-search');
+  const statusEl      = document.getElementById('search-status');
+  const resultsEl     = document.getElementById('search-results');
+  const themeBrowser  = document.getElementById('theme-browser');
+  const codeInput     = document.getElementById('code-input');
+  const loadForm      = document.getElementById('load-form');
 
-  const VISIBLE_CAP = 300; // max DOM nodes rendered at once
-  let allItems = [];        // full catalog, loaded once
+  const VISIBLE_CAP = 300;
+  let allItems      = [];   // full catalog
+  let subjectItems  = null; // matrices from an active subject browse (or null)
+  let activeSubject = null; // { code, value, theme }
 
-  // ── Render a slice of items into the results div ──────────────────────────
+  // ── Render a list of {code, title} items ─────────────────────────────────
   function renderItems(items) {
-    const visible = items.slice(0, VISIBLE_CAP);
+    const q       = searchInput.value.trim().toLowerCase();
+    const matched = q
+      ? items.filter(i => i.code.toLowerCase().includes(q) || i.title.toLowerCase().includes(q))
+      : items;
+    const visible = matched.slice(0, VISIBLE_CAP);
     const frag    = document.createDocumentFragment();
 
     for (const { code, title } of visible) {
       const item = document.createElement('div');
       item.className = 'sr-item';
 
-      const codeEl = document.createElement('code');
+      const codeEl  = document.createElement('code');
       codeEl.textContent = code;
       const titleEl = document.createElement('span');
       titleEl.textContent = title;
@@ -169,57 +222,161 @@ document.getElementById('load-form').addEventListener('submit', function () {
         codeInput.value = code;
         codeInput.focus();
       });
-
       btn.addEventListener('click', function () {
         codeInput.value = code;
         document.getElementById('loading-msg').style.display = 'block';
         loadForm.submit();
       });
-
       frag.appendChild(item);
     }
 
     resultsEl.innerHTML = '';
     resultsEl.appendChild(frag);
 
-    const total = items.length;
-    if (total > VISIBLE_CAP) {
+    if (matched.length > VISIBLE_CAP) {
       const note = document.createElement('div');
       note.style.cssText = 'padding:0.4rem 0.75rem;font-size:0.8rem;color:var(--color-text-muted,#888);';
-      note.textContent = `Showing ${VISIBLE_CAP} of ${total.toLocaleString()} — type to filter`;
+      note.textContent = `Showing ${VISIBLE_CAP} of ${matched.length.toLocaleString()} — type to filter`;
       resultsEl.appendChild(note);
+    }
+    return matched.length;
+  }
+
+  // ── Update status line ────────────────────────────────────────────────────
+  function updateStatus(count, context) {
+    statusEl.innerHTML = '';
+    const text = document.createTextNode(context
+      ? `${count.toLocaleString()} tables`
+      : (searchInput.value.trim()
+          ? `${count.toLocaleString()} matching "${searchInput.value.trim()}"`
+          : `${allItems.length.toLocaleString()} tables`));
+    statusEl.appendChild(text);
+
+    if (activeSubject) {
+      const badge = document.createElement('span');
+      badge.className = 'sbj-badge';
+      badge.innerHTML = `${activeSubject.theme} › ${activeSubject.value} <button title="Clear subject filter">×</button>`;
+      badge.querySelector('button').addEventListener('click', clearSubject);
+      statusEl.appendChild(badge);
     }
   }
 
-  // ── Filter and re-render on each keystroke ────────────────────────────────
+  // ── Show/hide theme browser ───────────────────────────────────────────────
+  function showThemeBrowser() {
+    themeBrowser.style.display = '';
+    resultsEl.innerHTML = '';
+    statusEl.innerHTML  = '';
+  }
+  function hideThemeBrowser() {
+    themeBrowser.style.display = 'none';
+  }
+
+  // ── Filter and re-render on keystroke ────────────────────────────────────
   searchInput.addEventListener('input', function () {
-    const q  = this.value.trim().toLowerCase();
-    const matched = q
-      ? allItems.filter(i => i.code.toLowerCase().includes(q) || i.title.toLowerCase().includes(q))
-      : allItems;
+    const q = this.value.trim();
+    const source = subjectItems || allItems;
 
-    statusEl.textContent = q
-      ? `${matched.length.toLocaleString()} matching "${this.value.trim()}"`
-      : `${allItems.length.toLocaleString()} tables`;
+    if (!q && !activeSubject) {
+      showThemeBrowser();
+      return;
+    }
 
-    renderItems(matched);
+    hideThemeBrowser();
+    const count = renderItems(source);
+
+    if (activeSubject) {
+      updateStatus(count, true);
+    } else {
+      statusEl.textContent = q
+        ? `${renderItems(source).toLocaleString()} matching "${q}"`
+        : `${allItems.length.toLocaleString()} tables`;
+      // renderItems already did the work; just fix status text
+      const matched = q ? source.filter(i => i.code.toLowerCase().includes(q.toLowerCase()) || i.title.toLowerCase().includes(q.toLowerCase())) : source;
+      statusEl.textContent = q
+        ? `${matched.length.toLocaleString()} matching "${q}"`
+        : `${allItems.length.toLocaleString()} tables`;
+    }
   });
 
-  // ── Load full catalog from local SQLite on page load ─────────────────────
+  // ── Subject chip click ────────────────────────────────────────────────────
+  async function browseSubject(sbj_code, sbj_value, thm_value) {
+    activeSubject = { code: sbj_code, value: sbj_value, theme: thm_value };
+    subjectItems  = null;
+    hideThemeBrowser();
+    resultsEl.innerHTML = '<div style="padding:0.6rem 0.75rem;font-size:0.9rem;color:var(--color-text-muted,#888);">Loading…</div>';
+    statusEl.textContent = `Loading ${sbj_value}…`;
+
+    try {
+      const res  = await fetch(`/-/pxstat/browse/${sbj_code}`);
+      const data = await res.json();
+      subjectItems = (data.matrices || []).map(m => ({ code: m.code, title: m.title }));
+      const count  = renderItems(subjectItems);
+      updateStatus(count, true);
+    } catch (err) {
+      resultsEl.innerHTML = `<div style="padding:0.6rem;color:#b91c1c;">Error: ${err.message}</div>`;
+    }
+  }
+
+  function clearSubject() {
+    activeSubject = null;
+    subjectItems  = null;
+    searchInput.value = '';
+    showThemeBrowser();
+  }
+
+  // ── Build theme browser from subjects API ─────────────────────────────────
+  async function loadThemes() {
+    try {
+      const res    = await fetch('/-/pxstat/subjects');
+      const themes = await res.json();
+      const loader = document.getElementById('theme-browser-loading');
+      if (loader) loader.remove();
+
+      const frag = document.createDocumentFragment();
+      for (const thm of themes.sort((a, b) => a.value.localeCompare(b.value))) {
+        const section = document.createElement('div');
+        section.className = 'thm-section';
+
+        const label = document.createElement('p');
+        label.className = 'thm-label';
+        label.textContent = thm.value;
+        section.appendChild(label);
+
+        const chips = document.createElement('div');
+        chips.className = 'sbj-chips';
+        for (const sbj of thm.subjects.sort((a, b) => a.value.localeCompare(b.value))) {
+          const chip = document.createElement('button');
+          chip.className = 'sbj-chip';
+          chip.type = 'button';
+          chip.textContent = sbj.value;
+          chip.addEventListener('click', () => browseSubject(sbj.code, sbj.value, thm.value));
+          chips.appendChild(chip);
+        }
+        section.appendChild(chips);
+        frag.appendChild(section);
+      }
+      themeBrowser.appendChild(frag);
+    } catch (err) {
+      const loader = document.getElementById('theme-browser-loading');
+      if (loader) loader.textContent = 'Could not load themes.';
+    }
+  }
+
+  // ── Load full catalog from local SQLite ───────────────────────────────────
   async function loadCatalog() {
     try {
       const res  = await fetch('/curated/pxstat_catalog.json?_size=15000&_shape=objects&_nofacet=1');
       const data = await res.json();
       allItems   = (data.rows || []).map(r => ({ code: r.code, title: r.title }));
-
-      statusEl.textContent = `${allItems.length.toLocaleString()} tables`;
-      renderItems(allItems);
     } catch (err) {
-      statusEl.textContent = 'Could not load catalog: ' + err.message;
+      // catalog unavailable; search still works via subject browse
     }
   }
 
+  // ── Init ──────────────────────────────────────────────────────────────────
   loadCatalog();
+  loadThemes();
+  showThemeBrowser();
 })();
 </script>
 {% endblock %}

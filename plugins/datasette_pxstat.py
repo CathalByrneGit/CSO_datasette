@@ -38,8 +38,14 @@ DATASET_URL = (
 
 @hookimpl
 def startup(datasette):
-    """Create the in-memory database for user-loaded tables on server start."""
-    datasette.add_memory_database("user_tables")
+    async def inner():
+        datasette.add_memory_database("user_tables")
+        db = datasette.get_database("user_tables")
+        await db.execute_write(
+            "CREATE TABLE IF NOT EXISTS _pxstat_meta "
+            "(table_name TEXT PRIMARY KEY, code TEXT, description TEXT)"
+        )
+    return inner
 
 
 @hookimpl
@@ -48,6 +54,8 @@ def register_routes():
         (r"^/-/pxstat$", pxstat_index),
         (r"^/-/pxstat/catalog$", pxstat_catalog),
         (r"^/-/pxstat/load$", pxstat_load),
+        (r"^/-/pxstat/subjects$", pxstat_subjects),
+        (r"^/-/pxstat/browse/(?P<sbj_code>\d+)$", pxstat_browse_subject),
     ]
 
 
@@ -62,15 +70,25 @@ def menu_links(datasette, actor):
 
 async def pxstat_index(datasette, request):
     db = datasette.get_database("user_tables")
-    loaded_tables = await db.table_names()
+    table_names = [t for t in await db.table_names() if not t.startswith("_")]
     has_curated = "curated" in datasette.databases
     prefill_code = request.args.get("code", "").strip().upper()
+
+    descriptions = {}
+    try:
+        rows = await db.execute("SELECT table_name, description FROM _pxstat_meta")
+        for row in rows.rows:
+            descriptions[row[0]] = row[1]
+    except Exception:
+        pass
+
+    loaded = [{"name": t, "description": descriptions.get(t, "")} for t in table_names]
 
     return Response.html(
         await datasette.render_template(
             "pxstat_index.html",
             {
-                "loaded_tables": loaded_tables,
+                "loaded": loaded,
                 "has_curated": has_curated,
                 "prefill_code": prefill_code,
             },
@@ -145,13 +163,94 @@ async def pxstat_load(datasette, request):
         )
 
     await db.execute_write_fn(_load, block=True)
+    await _store_pxstat_meta(datasette, code, table_name)
 
     return Response.redirect(f"/user_tables/{table_name}")
 
 
 # ---------------------------------------------------------------------------
+# Subjects / browse routes
+# ---------------------------------------------------------------------------
+
+async def pxstat_subjects(datasette, request):
+    """Return the Theme > Subject tree, from DB if available, else live API."""
+    if "curated" in datasette.databases:
+        try:
+            rows = (await datasette.get_database("curated").execute(
+                "SELECT thm_code, thm_value, sbj_code, sbj_value "
+                "FROM pxstat_subjects ORDER BY thm_value, sbj_value"
+            )).rows
+            themes = {}
+            for r in rows:
+                thm = themes.setdefault(r[0], {"code": r[0], "value": r[1], "subjects": []})
+                thm["subjects"].append({"code": r[2], "value": r[3]})
+            return Response.json(list(themes.values()))
+        except Exception:
+            pass
+
+    # Fallback: live API call
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                CATALOG_URL,
+                json={"jsonrpc": "2.0",
+                      "method": "PxStat.System.Navigation.Navigation_API.Read",
+                      "params": {"LngIsoCode": "en"}},
+            )
+        tree = resp.json()["result"]
+        themes = [
+            {"code": t["ThmCode"], "value": t["ThmValue"],
+             "subjects": [{"code": s["SbjCode"], "value": s["SbjValue"]}
+                          for s in t["subject"]]}
+            for t in tree
+        ]
+        return Response.json(themes)
+    except Exception as exc:
+        return Response.json({"error": str(exc)}, status=502)
+
+
+async def pxstat_browse_subject(datasette, request):
+    """Return matrices for a given subject code via Navigation_API.Search."""
+    sbj_code = int(request.url_vars["sbj_code"])
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                CATALOG_URL,
+                json={"jsonrpc": "2.0",
+                      "method": "PxStat.System.Navigation.Navigation_API.Search",
+                      "params": {"LngIsoCode": "en", "SbjCode": sbj_code}},
+            )
+        data = resp.json()
+        if "result" not in data:
+            return Response.json({"error": "Navigation API error"}, status=502)
+        matrices = [{"code": m["MtrCode"], "title": m["MtrTitle"]} for m in data["result"]]
+        return Response.json({"matrices": matrices})
+    except Exception as exc:
+        return Response.json({"error": str(exc)}, status=502)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+async def _store_pxstat_meta(datasette, code: str, table_name: str):
+    """Look up table title from catalog and persist to user_tables._pxstat_meta."""
+    description = ""
+    if "curated" in datasette.databases:
+        try:
+            row = (await datasette.get_database("curated").execute(
+                "SELECT title FROM pxstat_catalog WHERE code = ?", [code]
+            )).first()
+            if row:
+                description = row["title"]
+        except Exception:
+            pass
+    db = datasette.get_database("user_tables")
+    await db.execute_write(
+        "INSERT OR REPLACE INTO _pxstat_meta VALUES (?, ?, ?)",
+        [table_name, code, description],
+    )
+
 
 def _error_response(message: str) -> Response:
     html = f"""
@@ -219,12 +318,38 @@ def register_agent_tools(datasette):
         return []
     return [
         AgentTool(
+            name="search_pxstat_catalog",
+            description=(
+                "Full-text search the CSO PxStat catalog of 12,000+ tables by keyword. "
+                "Returns matching table codes and titles ranked by relevance. "
+                "Use this to discover relevant tables before loading them with load_pxstat_table. "
+                "Accepts plain keywords — e.g. 'housing prices', 'unemployment', 'CPI inflation'."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keywords to search for in table titles and codes",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results to return (default 20, max 50)",
+                    },
+                },
+                "required": ["query"],
+            },
+            fn=_tool_search_catalog,
+        ),
+        AgentTool(
             name="suggest_pxstat_joins",
             description=(
                 "Scan all PxStat tables loaded in curated and user_tables databases and "
                 "identify columns that could be used to join them together. "
                 "Returns shared column names, overlap statistics, and ready-to-run SQL examples. "
-                "Use this when asked about combining tables or finding relationships between datasets."
+                "Use this when asked about combining tables or finding relationships between datasets. "
+                "You may then run the suggested SQL with sql_query, compute derived statistics "
+                "with execute_micropython, or visualise the combined data with render_chart."
             ),
             input_schema={"type": "object", "properties": {}},
             fn=_tool_suggest_joins,
@@ -234,7 +359,9 @@ def register_agent_tools(datasette):
             description=(
                 "Fetch a CSO Ireland PxStat table by its matrix code (e.g. E2003, HPM09, CPM01) "
                 "from the live PxStat API and load it into the user_tables database ready for querying. "
-                "Use this when the user wants to add a table that isn't already loaded."
+                "Use this when the user wants to add a table that isn't already loaded. "
+                "You may then filter and aggregate with sql_query, compute derived statistics "
+                "with execute_micropython, or visualise results with render_chart."
             ),
             input_schema={
                 "type": "object",
@@ -249,6 +376,27 @@ def register_agent_tools(datasette):
             fn=_tool_load_table,
         ),
     ]
+
+
+async def _tool_search_catalog(datasette, actor, query: str, limit: int = 20):
+    if "search" not in datasette.databases:
+        return json.dumps({"error": "Search index not available."})
+    limit = min(max(1, int(limit)), 50)
+    try:
+        rows = await datasette.get_database("search").execute(
+            "SELECT si.key, si.title "
+            "FROM search_index si "
+            "JOIN search_index_fts fts ON si.rowid = fts.rowid "
+            "WHERE search_index_fts MATCH ? "
+            "ORDER BY rank LIMIT ?",
+            [query, limit],
+        )
+        results = [{"code": r[0], "title": r[1]} for r in rows.rows]
+        if not results:
+            return json.dumps({"message": f"No tables found matching '{query}'.", "results": []})
+        return json.dumps({"results": results, "count": len(results)})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
 
 
 _SKIP_COLS = {
@@ -406,6 +554,7 @@ async def _tool_load_table(datasette, actor, code: str):
         )
 
     await db.execute_write_fn(_load, block=True)
+    await _store_pxstat_meta(datasette, code, table_name)
 
     return json.dumps({
         "loaded": table_name,

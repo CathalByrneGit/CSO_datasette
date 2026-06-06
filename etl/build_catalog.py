@@ -61,6 +61,44 @@ def store_catalog(conn: sqlite3.Connection, items: list[dict]):
     print(f"  Stored {len(rows):,} rows in pxstat_catalog.")
 
 
+def fetch_navigation() -> list[dict]:
+    print("Fetching navigation tree from CSO PxStat...", flush=True)
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(
+            CATALOG_URL,
+            json={
+                "jsonrpc": "2.0",
+                "method": "PxStat.System.Navigation.Navigation_API.Read",
+                "params": {"LngIsoCode": "en"},
+            },
+        )
+    resp.raise_for_status()
+    tree = resp.json()["result"]
+    n_subjects = sum(len(t["subject"]) for t in tree)
+    print(f"  {len(tree)} themes, {n_subjects} subjects found.")
+    return tree
+
+
+def store_subjects(conn: sqlite3.Connection, tree: list[dict]):
+    conn.execute("DROP TABLE IF EXISTS pxstat_subjects")
+    conn.execute("""
+        CREATE TABLE pxstat_subjects (
+            thm_code  INTEGER,
+            thm_value TEXT,
+            sbj_code  INTEGER PRIMARY KEY,
+            sbj_value TEXT
+        )
+    """)
+    rows = [
+        (t["ThmCode"], t["ThmValue"], s["SbjCode"], s["SbjValue"])
+        for t in tree
+        for s in t["subject"]
+    ]
+    conn.executemany("INSERT INTO pxstat_subjects VALUES (?, ?, ?, ?)", rows)
+    conn.commit()
+    print(f"  Stored {len(rows)} subjects in pxstat_subjects.")
+
+
 def build_fts_index():
     print("\nBuilding dogsheep-beta FTS index into search.db...")
     result = subprocess.run(
@@ -76,9 +114,11 @@ def build_fts_index():
 
 def main():
     items = fetch_catalog()
+    tree = fetch_navigation()
 
     conn = sqlite3.connect(DB_PATH)
     store_catalog(conn, items)
+    store_subjects(conn, tree)
     conn.close()
 
     build_fts_index()
