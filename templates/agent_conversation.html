@@ -90,19 +90,86 @@
 <script src="/-/static-plugins/datasette-agent/chat-export.js"></script>
 
 <script>
-// Copy button: reads raw markdown from data-md before agent.js renders it
+// Copy button: reads raw markdown from data-md
 document.addEventListener('click', function (e) {
   const btn = e.target.closest('.copy-msg-btn');
   if (!btn) return;
-  const md = btn.previousElementSibling.dataset.md;
-  if (!md) return;
+  const contentDiv = btn.previousElementSibling;
+  const md = contentDiv && contentDiv.dataset && contentDiv.dataset.md;
+  if (!md) {
+    btn.textContent = 'Not ready';
+    setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+    return;
+  }
   navigator.clipboard.writeText(md).then(function () {
     btn.textContent = 'Copied!';
     setTimeout(function () { btn.textContent = 'Copy'; }, 2000);
+  }).catch(function () {
+    btn.textContent = 'Failed';
+    setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
   });
 });
 
-// Also add copy buttons to messages injected during streaming
+// Intercept the SSE stream to accumulate raw markdown tokens and stamp
+// data-md on streamed messages (agent.js never stores the raw text in the DOM).
+(function () {
+  const origFetch = window.fetch;
+  window.fetch = async function (url, opts) {
+    const resp = await origFetch(url, opts);
+    if (typeof url === 'string' && url.includes('/stream') && opts && opts.method === 'POST') {
+      try {
+        const [body1, body2] = resp.body.tee();
+        consumeStreamCopy(body2);
+        return new Response(body1, {
+          status: resp.status,
+          statusText: resp.statusText,
+          headers: resp.headers,
+        });
+      } catch (e) {
+        return resp;
+      }
+    }
+    return resp;
+  };
+
+  async function consumeStreamCopy(body) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let rawMd = '';
+    let eventType = null;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ') && eventType) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (eventType === 'text_chunk' && data.content) {
+                rawMd += data.content;
+              } else if ((eventType === 'done' || eventType === 'error') && rawMd) {
+                const divs = document.querySelectorAll(
+                  '.agent-message-assistant .agent-message-content:not([data-md])'
+                );
+                if (divs.length > 0) divs[divs.length - 1].dataset.md = rawMd;
+                rawMd = '';
+              }
+            } catch {}
+            eventType = null;
+          }
+        }
+      }
+    } catch {}
+  }
+})();
+
+// Add copy buttons to assistant messages injected during streaming
 new MutationObserver(function (mutations) {
   mutations.forEach(function (m) {
     m.addedNodes.forEach(function (node) {
