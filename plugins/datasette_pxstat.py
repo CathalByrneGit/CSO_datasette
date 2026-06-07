@@ -570,7 +570,7 @@ async def _tool_load_table(datasette, actor, code: str):
         "columns": columns,
         "message": f"Table {table_name} loaded with {len(rows):,} rows. Query it at /user_tables/{table_name}",
         "_html": (
-            f'<p>✅ Loaded <strong>{table_name}</strong> — {len(rows):,} rows, {len(columns)} columns.</p>'
-            f'<p class="agent-sql-edit-link"><a href="/user_tables/{table_name}">Browse {table_name} →</a></p>'
+            f'<p>Loaded <strong>{table_name}</strong> &mdash; {len(rows):,} rows, {len(columns)} columns.</p>'
+            f'<p class="agent-sql-edit-link"><a href="/user_tables/{table_name}">Browse {table_name} &rarr;</a></p>'
         ),
     })
